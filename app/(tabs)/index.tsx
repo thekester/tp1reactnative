@@ -1,3 +1,4 @@
+import React from 'react';
 import { Image, StyleSheet, Platform } from 'react-native';
 
 import { HelloWave } from '@/components/HelloWave';
@@ -5,7 +6,7 @@ import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import CalculateurDeSomme from '@/components/CalculateurDeSomme';
-
+import LocalisationComponent from '@/components/LocalisationComponent';
 
 export default function HomeScreen() {
   return (
@@ -16,11 +17,13 @@ export default function HomeScreen() {
           source={require('@/assets/images/partial-react-logo.png')}
           style={styles.reactLogo}
         />
-      }>
+      }
+    >
       <ThemedView style={styles.titleContainer}>
         <ThemedText type="title">Welcome!</ThemedText>
         <HelloWave />
       </ThemedView>
+      
       <ThemedView style={styles.stepContainer}>
         <ThemedText type="subtitle">Step 1: Try it</ThemedText>
         <ThemedText>
@@ -30,18 +33,20 @@ export default function HomeScreen() {
             {Platform.select({
               ios: 'cmd + d',
               android: 'cmd + m',
-              web: 'F12'
+              web: 'F12',
             })}
           </ThemedText>{' '}
           to open developer tools.
         </ThemedText>
       </ThemedView>
+      
       <ThemedView style={styles.stepContainer}>
         <ThemedText type="subtitle">Step 2: Explore</ThemedText>
         <ThemedText>
           Tap the Explore tab to learn more about what's included in this starter app.
         </ThemedText>
       </ThemedView>
+      
       <ThemedView style={styles.stepContainer}>
         <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
         <ThemedText>
@@ -52,11 +57,17 @@ export default function HomeScreen() {
           <ThemedText type="defaultSemiBold">app-example</ThemedText>.
         </ThemedText>
       </ThemedView>
+      
       <ThemedView style={styles.stepContainer}>
         <ThemedText type="subtitle">Calculateur de somme</ThemedText>
         <CalculateurDeSomme />
       </ThemedView>
-
+      
+      <ThemedView style={styles.stepContainer}>
+        <ThemedText type="subtitle">Localisation</ThemedText>
+        <LocalisationComponent />
+      </ThemedView>
+      
     </ParallaxScrollView>
   );
 }
@@ -70,6 +81,8 @@ const styles = StyleSheet.create({
   stepContainer: {
     gap: 8,
     marginBottom: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
   reactLogo: {
     height: 178,
