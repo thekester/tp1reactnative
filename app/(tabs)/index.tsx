@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import CalculateurDeSomme from '@/components/CalculateurDeSomme';
 import LocalisationComponent from '@/components/LocalisationComponent';
+import DatabaseComponent from '@/components/DatabaseComponent';
 
 export default function HomeScreen() {
   return (
@@ -66,6 +67,11 @@ export default function HomeScreen() {
       <ThemedView style={styles.stepContainer}>
         <ThemedText type="subtitle">Localisation</ThemedText>
         <LocalisationComponent />
+      </ThemedView>
+
+      <ThemedView style={styles.stepContainer}>
+        <ThemedText type="subtitle">SQLite Database</ThemedText>
+        <DatabaseComponent />
       </ThemedView>
       
     </ParallaxScrollView>
