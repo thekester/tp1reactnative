@@ -1,51 +1,52 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  TextInput,
+  StyleSheet,
+  ScrollView,
+  Platform
+} from 'react-native';
 import SQLite from 'react-native-sqlite-storage';
 
-// Étape 2 : Importer et désactiver les Promesses pour SQLite
-SQLite.enablePromise(false);
+const isWeb = Platform.OS === 'web';
 
-/*
-  Étape 3 : Création de la variable représentant la base de données.
-  Le type DatabaseParams ne reconnaît pas les propriétés "version", "displayName" et "size".
-  Pour respecter la consigne et éviter l'erreur TS(2353), nous effectuons un cast en "any".
-  https://stackoverflow.com/questions/69249926/error-ts7006-parameter-req-implicitly-has-an-any-type
-*/
-const db = SQLite.openDatabase(
-  {
-    name: 'myDatabase.db',
-    version: '1.0',            // Version de la base de données
-    displayName: 'MyDatabase', // Nom affiché de la base de données
-    size: 200000,              // Taille maximale (en octets)
-    location: 'default',
-  } as any, // Cast pour inclure les propriétés supplémentaires
-  () => { console.log('DB opened'); },
-  error => { console.log('DB error:', error); }
-);
+let db: any = null;
+if (!isWeb) {
+  // Pour les plateformes mobiles, on utilise SQLite
+  SQLite.enablePromise(false);
+  db = SQLite.openDatabase(
+    {
+      name: 'myDatabase.db',
+      version: '1.0',            // Version de la base de données
+      displayName: 'MyDatabase', // Nom affiché de la base de données
+      size: 200000,              // Taille maximale (en octets)
+      location: 'default',
+    } as any, // Cast pour inclure les propriétés supplémentaires
+    () => {
+      console.log('DB opened');
+    },
+    error => {
+      console.log('DB error:', error);
+    }
+  );
+}
 
-/*
-  Étape 4 :
-  Définir une fonction pour exécuter des requêtes SQL.
-  Pour l'insertion et la création de table, nous utilisons des Promesses.
-  https://stackoverflow.com/questions/68593847/promise-logic-with-sql-in-nodejs-when-making-calls-to-database
-*/
+// Fonction générique pour exécuter une requête SQL sur mobile via SQLite
 const interactionSQL = (query: string, params: any[] = []): Promise<any> => {
   return new Promise((resolve, reject) => {
-    db.transaction(tx => {
+    db.transaction((tx: any) => {
       tx.executeSql(
         query,
         params,
-        (tx, results) => resolve(results),
-        (tx, error) => reject(error)
+        (tx: any, results: any) => resolve(results),
+        (tx: any, error: any) => reject(error)
       );
     });
   });
 };
 
-/*
-  Composant bouton stylisé.
-  https://stackoverflow.com/questions/52321539/react-passing-props-with-styled-components
-*/
 interface StyledButtonProps {
   onPress: () => void;
   title: string;
@@ -57,105 +58,125 @@ const StyledButton: React.FC<StyledButtonProps> = ({ onPress, title }) => (
   </TouchableOpacity>
 );
 
-/*
-  Composant principal : Gestion de la base de données locale
-  - Étape 5 : Bouton pour créer la table si elle n'existe pas.
-  - Étape 6 : Champ textuel et bouton pour enregistrer les données saisies.
-  - Étape 7 : Bouton pour récupérer le contenu de la base de données, ici avec des callbacks (pas de Promesse).
-  - Nouveau : Bouton en rouge avec poubelle pour vider la base de données et réinitialiser les IDs.
-  - Amélioration : Affichage des données enregistrées et feedback indiquant que la valeur a été enregistrée,
-    invitant à cliquer sur "Récupérer" pour mettre à jour l'affichage.
-  
-  Voir également cet exemple sur StackOverflow pour la gestion de SQLite dans React Native :
-  https://stackoverflow.com/questions/63462480/how-to-create-database-in-sqlite3-in-react-native
-*/
 const DatabaseComponent: React.FC = () => {
   const [inputText, setInputText] = useState<string>('');
   const [data, setData] = useState<any[]>([]);
   const [feedbackMessage, setFeedbackMessage] = useState<string>('');
 
-  // Création de la table "items"
+  // Création de la "table" (initialisation du stockage)
   const createTable = async () => {
-    const query = `CREATE TABLE IF NOT EXISTS items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      content TEXT
-    );`;
-    try {
-      await interactionSQL(query);
-      console.log('Table created successfully');
+    if (isWeb) {
+      if (!localStorage.getItem('items')) {
+        localStorage.setItem('items', JSON.stringify([]));
+        localStorage.setItem('itemsCounter', '1');
+      }
       setFeedbackMessage('La table a bien été créée.');
       setTimeout(() => setFeedbackMessage(''), 2000);
-    } catch (error) {
-      console.log('Error creating table:', error);
+    } else {
+      const query = `CREATE TABLE IF NOT EXISTS items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content TEXT
+      );`;
+      try {
+        await interactionSQL(query);
+        console.log('Table created successfully');
+        setFeedbackMessage('La table a bien été créée.');
+        setTimeout(() => setFeedbackMessage(''), 2000);
+      } catch (error) {
+        console.log('Error creating table:', error);
+      }
     }
   };
 
-  // Enregistrement des données saisies dans la table "items"
+  // Enregistrement des données
   const saveData = async () => {
-    const query = `INSERT INTO items (content) VALUES (?);`;
-    try {
-      await interactionSQL(query, [inputText]);
-      console.log('Data saved successfully');
-      // Feedback pour indiquer que la valeur est enregistrée et qu'il faut cliquer sur "Récupérer"
+    if (isWeb) {
+      let items = JSON.parse(localStorage.getItem('items') || '[]');
+      let counter = parseInt(localStorage.getItem('itemsCounter') || '1', 10);
+      const newItem = { id: counter, content: inputText };
+      items.push(newItem);
+      localStorage.setItem('items', JSON.stringify(items));
+      localStorage.setItem('itemsCounter', (counter + 1).toString());
+      console.log('Data saved successfully (web)');
       setFeedbackMessage("La valeur a bien été enregistrée. Cliquez sur 'Récupérer' pour mettre à jour l'affichage.");
       setInputText('');
       setTimeout(() => setFeedbackMessage(''), 2000);
-    } catch (error) {
-      console.log('Error saving data:', error);
+    } else {
+      const query = `INSERT INTO items (content) VALUES (?);`;
+      try {
+        await interactionSQL(query, [inputText]);
+        console.log('Data saved successfully');
+        setFeedbackMessage("La valeur a bien été enregistrée. Cliquez sur 'Récupérer' pour mettre à jour l'affichage.");
+        setInputText('');
+        setTimeout(() => setFeedbackMessage(''), 2000);
+      } catch (error) {
+        console.log('Error saving data:', error);
+      }
     }
   };
 
-  // Récupération des données de la table "items" sans utiliser de Promesse (via callbacks)
+  // Récupération des données
   const getData = () => {
-    const query = `SELECT * FROM items;`;
-    db.transaction(tx => {
-      tx.executeSql(
-        query,
-        [],
-        (tx, results) => {
-          const rows = results.rows;
-          let items: any[] = [];
-          for (let i = 0; i < rows.length; i++) {
-            items.push(rows.item(i));
+    if (isWeb) {
+      const items = JSON.parse(localStorage.getItem('items') || '[]');
+      setData(items);
+    } else {
+      const query = `SELECT * FROM items;`;
+      db.transaction((tx: any) => {
+        tx.executeSql(
+          query,
+          [],
+          (tx: any, results: any) => {
+            const rows = results.rows;
+            let items: any[] = [];
+            for (let i = 0; i < rows.length; i++) {
+              items.push(rows.item(i));
+            }
+            setData(items);
+          },
+          (tx: any, error: any) => {
+            console.log('Error retrieving data:', error);
           }
-          setData(items);
-        },
-        (tx, error) => {
-          console.log('Error retrieving data:', error);
-        }
-      );
-    });
+        );
+      });
+    }
   };
 
-  // Vider la base de données et réinitialiser les IDs
+  // Vider la "base" et réinitialiser les IDs
   const clearDatabase = () => {
-    db.transaction(tx => {
-      // Supprimer toutes les entrées de la table "items"
-      tx.executeSql(
-        "DELETE FROM items;",
-        [],
-        (tx, results) => {
-          console.log('Data deleted successfully');
-          // Réinitialiser l'auto-incrément en supprimant l'entrée correspondante dans sqlite_sequence
-          tx.executeSql(
-            "DELETE FROM sqlite_sequence WHERE name='items';",
-            [],
-            (tx, results) => {
-              console.log('Auto-increment reset successfully');
-              setData([]); // On vide aussi l'état local
-              setFeedbackMessage('La base de données a été vidée et les IDs réinitialisés.');
-              setTimeout(() => setFeedbackMessage(''), 2000);
-            },
-            (tx, error) => {
-              console.log('Error resetting auto-increment:', error);
-            }
-          );
-        },
-        (tx, error) => {
-          console.log('Error clearing database:', error);
-        }
-      );
-    });
+    if (isWeb) {
+      localStorage.removeItem('items');
+      localStorage.removeItem('itemsCounter');
+      setData([]);
+      setFeedbackMessage('La base de données a été vidée et les IDs réinitialisés.');
+      setTimeout(() => setFeedbackMessage(''), 2000);
+    } else {
+      db.transaction((tx: any) => {
+        tx.executeSql(
+          "DELETE FROM items;",
+          [],
+          (tx: any, results: any) => {
+            console.log('Data deleted successfully');
+            tx.executeSql(
+              "DELETE FROM sqlite_sequence WHERE name='items';",
+              [],
+              (tx: any, results: any) => {
+                console.log('Auto-increment reset successfully');
+                setData([]);
+                setFeedbackMessage('La base de données a été vidée et les IDs réinitialisés.');
+                setTimeout(() => setFeedbackMessage(''), 2000);
+              },
+              (tx: any, error: any) => {
+                console.log('Error resetting auto-increment:', error);
+              }
+            );
+          },
+          (tx: any, error: any) => {
+            console.log('Error clearing database:', error);
+          }
+        );
+      });
+    }
   };
 
   return (
@@ -178,7 +199,6 @@ const DatabaseComponent: React.FC = () => {
         <StyledButton onPress={saveData} title="Enregistrer" />
         <StyledButton onPress={getData} title="Récupérer" />
       </View>
-      {/* Bouton en rouge pour vider la base de données et réinitialiser les IDs */}
       <View style={styles.buttonRow}>
         <TouchableOpacity style={styles.deleteButton} onPress={clearDatabase}>
           <Text style={styles.deleteButtonText}>🗑️ Vider la DB</Text>
@@ -187,7 +207,7 @@ const DatabaseComponent: React.FC = () => {
       {data.length > 0 && (
         <View style={styles.dataContainer}>
           <Text style={styles.dataHeader}>Données enregistrées :</Text>
-          {data.map(item => (
+          {data.map((item: any) => (
             <View key={item.id} style={styles.card}>
               <Text style={styles.cardTitle}>ID : {item.id}</Text>
               <Text style={styles.cardContent}>{item.content}</Text>
@@ -258,7 +278,7 @@ const styles = StyleSheet.create({
   },
   deleteButton: {
     flex: 1,
-    backgroundColor: '#f44336', // Couleur rouge
+    backgroundColor: '#f44336',
     paddingVertical: 12,
     marginHorizontal: 5,
     borderRadius: 8,
