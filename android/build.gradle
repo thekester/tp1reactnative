@@ -8,12 +8,7 @@ buildscript {
         targetSdkVersion = Integer.parseInt(findProperty('android.targetSdkVersion') ?: '34')
         kotlinVersion = findProperty('android.kotlinVersion') ?: '1.9.25'
 
-        // Spécifiez ici la version du NDK à utiliser
-        ndkVersion = "27.2.12479018"
-        // Assurez-vous que ndkPath pointe vers votre NDK Linux natif, par exemple :
-        //ndkPath = "/home/athena/Android/ndk/android-ndk-r27c"
-        // Vous pouvez commenter la ligne ci-dessous si vous utilisez un NDK natif sous Linux.
-        // ndkPath  = "/mnt/c/Users/Avenel/AppData/Local/Android/Sdk/ndk/android-ndk-r27c"
+        ndkVersion = "26.1.10909125"
     }
     repositories {
         google()
@@ -38,6 +33,7 @@ allprojects {
             // Android JSC is installed from npm
             url(new File(['node', '--print', "require.resolve('jsc-android/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim(), '../dist'))
         }
+
         google()
         mavenCentral()
         maven { url 'https://www.jitpack.io' }
