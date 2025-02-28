@@ -7,10 +7,65 @@ import {
   PermissionsAndroid,
   Button,
   Linking,
+  Platform,
 } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
+import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 
-// Définition de l'interface pour les coordonnées de géolocalisation personnalisées
+// ----------------------------------------------------------------------------
+// CONFIGURATION DES NOTIFICATIONS LOCALES
+// ----------------------------------------------------------------------------
+
+// Définition du gestionnaire de notifications pour afficher immédiatement
+// les notifications (sans son ni badge).
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
+
+/**
+ * Vérifie et demande la permission d'envoyer des notifications.
+ */
+async function checkAndRequestNotificationPermission() {
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+  if (existingStatus !== 'granted') {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+  return finalStatus === 'granted';
+}
+
+/**
+ * Fonction pour enregistrer l'appareil aux notifications et créer un canal par défaut sur Android.
+ */
+async function registerForNotificationsAsync() {
+  const permissionGranted = await checkAndRequestNotificationPermission();
+  if (!permissionGranted) {
+    console.log("Les notifications ne sont pas autorisées.");
+    return;
+  }
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('default', {
+      name: 'Default',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#FF231F7C',
+    });
+  }
+}
+
+// ----------------------------------------------------------------------------
+// INTERFACES POUR LES DONNÉES DE GÉOLOCALISATION
+// ----------------------------------------------------------------------------
+
+/**
+ * Interface définissant la structure des coordonnées de géolocalisation.
+ */
 interface MyGeoCoordinates {
   latitude: number;
   longitude: number;
@@ -21,27 +76,91 @@ interface MyGeoCoordinates {
   speed?: number | null;
 }
 
-// Interface pour représenter la position complète avec un timestamp
+/**
+ * Interface pour représenter une position complète avec ses coordonnées et un timestamp.
+ */
 interface MyGeolocationPosition {
   coords: MyGeoCoordinates;
   timestamp: number;
 }
 
-// Composant principal qui gère la collecte et l'affichage des positions
-const LocationList: React.FC = () => {
-  // State pour stocker la liste des positions collectées
-  const [locations, setLocations] = useState<MyGeoCoordinates[]>([]);
-  // State pour gérer les messages d'erreur
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  // State pour savoir si le tracking est actif
-  const [trackingActive, setTrackingActive] = useState<boolean>(true);
-  // Référence pour stocker l'identifiant du watch afin de pouvoir l'annuler plus tard
-  const watchIdRef = useRef<number | null>(null);
+// ----------------------------------------------------------------------------
+// COMPOSANT DE SUIVI DE GÉOLOCALISATION
+// ----------------------------------------------------------------------------
 
-  // Fonction asynchrone pour demander les permissions et lancer la géolocalisation
+const LocationList: React.FC = () => {
+  // Liste des positions collectées
+  const [locations, setLocations] = useState<MyGeoCoordinates[]>([]);
+  // Message d'erreur éventuel
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Indique si le tracking est actif
+  const [trackingActive, setTrackingActive] = useState<boolean>(true);
+  // Référence pour l'identifiant du watch de géolocalisation
+  const watchIdRef = useRef<number | null>(null);
+  // Référence pour mémoriser l'heure de démarrage du tracking
+  const trackingStartRef = useRef<number | null>(null);
+  // Référence pour l'intervalle qui envoie les notifications toutes les minutes
+  const notificationIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ----------------------------------------------------------------------------
+  // GESTION DES NOTIFICATIONS LOCALES
+  // ----------------------------------------------------------------------------
+
+  /**
+   * Envoie une notification immédiate indiquant que le tracking est démarré.
+   */
+  const sendTrackingStartedNotification = async () => {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Tracking commencé",
+        body: "Le suivi de votre position est lancé.",
+      },
+      trigger: null, // Notification immédiate
+    });
+    console.log("Notification de démarrage envoyée sur l'appareil");
+  };
+
+  /**
+   * Programme une notification locale toutes les minutes qui affiche
+   * la durée écoulée du tracking et la dernière position connue.
+   */
+  const scheduleMinuteNotification = async () => {
+    if (!trackingStartRef.current) return;
+    // Calcul de la durée écoulée (en minutes)
+    const elapsedMs = Date.now() - trackingStartRef.current;
+    const minutesElapsed = Math.floor(elapsedMs / 60000) || 0;
+    
+    // Récupération de la dernière position connue
+    const latestPosition = locations[locations.length - 1];
+    const positionText = latestPosition
+      ? `Position : Lat ${latestPosition.latitude.toFixed(5)}, Lon ${latestPosition.longitude.toFixed(5)}`
+      : 'Position non disponible';
+
+    // Envoi immédiat de la notification
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title:
+          minutesElapsed === 0
+            ? "Tracking démarré"
+            : `Tracking actif depuis ${minutesElapsed} minute${minutesElapsed > 1 ? 's' : ''}`,
+        body: positionText,
+        data: { minutesElapsed, latestPosition },
+      },
+      trigger: null,
+    });
+    console.log("Notification programmée pour", minutesElapsed, "minute(s) envoyée sur l'appareil");
+  };
+
+  // ----------------------------------------------------------------------------
+  // PERMISSIONS & DÉMARRAGE DU SUIVI
+  // ----------------------------------------------------------------------------
+
+  /**
+   * Demande les permissions nécessaires et démarre le suivi de la géolocalisation.
+   */
   const requestAndWatch = async () => {
     try {
-      // Demande de la permission de localisation fine (précision élevée, en premier plan)
+      // Demande de la permission de localisation en premier plan (fine)
       const fineLocation = await PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
         {
@@ -54,7 +173,6 @@ const LocationList: React.FC = () => {
         }
       );
 
-      // Vérification de la permission fine
       if (fineLocation !== PermissionsAndroid.RESULTS.GRANTED) {
         setErrorMessage(
           "Permission de géolocalisation refusée. Veuillez autoriser 'Utiliser seulement depuis cette application'."
@@ -75,7 +193,6 @@ const LocationList: React.FC = () => {
         }
       );
 
-      // Vérification de la permission d'arrière-plan
       if (backgroundLocation !== PermissionsAndroid.RESULTS.GRANTED) {
         setErrorMessage(
           "Permission de géolocalisation en arrière-plan refusée. Veuillez autoriser l'accès en arrière-plan dans les paramètres."
@@ -83,73 +200,102 @@ const LocationList: React.FC = () => {
         return;
       }
 
-      // Réinitialisation des données et lancement du tracking
+      // Réinitialiser les états et démarrer le tracking
       setLocations([]);
       setErrorMessage(null);
       setTrackingActive(true);
+      // Enregistrer l'heure de démarrage du tracking
+      trackingStartRef.current = Date.now();
+      // Envoyer la notification de démarrage du tracking
+      sendTrackingStartedNotification();
+      // Envoi immédiat d'une notification (optionnellement redondant)
+      scheduleMinuteNotification();
+      // Démarrer l'intervalle pour envoyer les notifications toutes les minutes
+      notificationIntervalRef.current = setInterval(scheduleMinuteNotification, 60000);
+      // Démarrer la surveillance de la position
       startWatching();
     } catch (err) {
-      // Capture et affichage des erreurs potentielles lors de la demande de permissions
       console.warn(err);
       setErrorMessage("Erreur lors de la demande de permission.");
     }
   };
 
-  // Fonction pour démarrer le suivi de la position
+  /**
+   * Démarre le suivi de la position en temps réel.
+   * À chaque mise à jour, la nouvelle position est ajoutée à l'état.
+   */
   const startWatching = () => {
-    // Si un suivi est déjà actif, on l'annule pour éviter des doublons
     if (watchIdRef.current !== null) {
       Geolocation.clearWatch(watchIdRef.current);
     }
-    // Démarrer le suivi avec watchPosition et stocker l'identifiant
+
     watchIdRef.current = Geolocation.watchPosition(
       (position: MyGeolocationPosition) => {
-        // Ajout de la nouvelle position à l'historique
-        setLocations(prev => [...prev, position.coords]);
+        const newCoords = position.coords;
+        setLocations(prev => [...prev, newCoords]);
         setErrorMessage(null);
+        // On se repose sur la notification programmée toutes les minutes.
       },
       (error) => {
-        // Gestion des erreurs retournées par le service de géolocalisation
         console.log(error.code, error.message);
         setErrorMessage(error.message);
       },
       {
-        enableHighAccuracy: true,    // Demander une précision élevée
-        distanceFilter: 0,           // Mise à jour même si le déplacement est minime
+        enableHighAccuracy: true,    // Demande une haute précision
+        distanceFilter: 0,           // Mise à jour même pour un petit déplacement
         interval: 5000,              // Mise à jour toutes les 5 secondes
-        fastestInterval: 2000,       // Intervalle minimum entre deux mises à jour
+        fastestInterval: 2000,       // Intervalle minimum de 2 secondes
       }
     );
   };
 
-  // Fonction pour arrêter le suivi et effacer l'historique
+  /**
+   * Arrête le suivi de la position, vide l'historique et arrête l'intervalle de notification.
+   */
   const stopTracking = () => {
-    // Si un suivi est en cours, on l'arrête
     if (watchIdRef.current !== null) {
       Geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
     }
-    // Réinitialisation de l'historique et mise à jour du status de tracking
+    if (notificationIntervalRef.current !== null) {
+      clearInterval(notificationIntervalRef.current);
+      notificationIntervalRef.current = null;
+    }
     setLocations([]);
     setTrackingActive(false);
     setErrorMessage("Géolocalisation arrêtée et historique supprimé.");
   };
 
-  // Utilisation de useEffect pour démarrer le tracking au montage du composant
+  // ----------------------------------------------------------------------------
+  // EFFECTS & NETTOYAGE
+  // ----------------------------------------------------------------------------
+
   useEffect(() => {
+    // Enregistrement aux notifications et demande de permissions au montage du composant
+    registerForNotificationsAsync();
     requestAndWatch();
+
     // Nettoyage lors du démontage pour éviter les fuites de mémoire
     return () => {
       if (watchIdRef.current !== null) {
         Geolocation.clearWatch(watchIdRef.current);
       }
+      if (notificationIntervalRef.current !== null) {
+        clearInterval(notificationIntervalRef.current);
+      }
     };
   }, []);
 
-  // Fonction pour ouvrir les paramètres du téléphone
+  /**
+   * Ouvre les paramètres du téléphone pour permettre à l'utilisateur de modifier les permissions.
+   */
   const handleOpenSettings = () => {
     Linking.openSettings();
   };
+
+  // ----------------------------------------------------------------------------
+  // RENDERING DU COMPOSANT
+  // ----------------------------------------------------------------------------
 
   return (
     <View style={styles.container}>
@@ -162,9 +308,7 @@ const LocationList: React.FC = () => {
       {errorMessage && (
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{errorMessage}</Text>
-          {/* Bouton pour réessayer de demander les permissions */}
           <Button title="Réessayer" onPress={requestAndWatch} />
-          {/* Bouton pour ouvrir directement les paramètres du téléphone */}
           <Button title="Ouvrir les paramètres" onPress={handleOpenSettings} />
         </View>
       )}
@@ -178,7 +322,6 @@ const LocationList: React.FC = () => {
           </Text>
         )}
       />
-      {/* Bouton conditionnel pour démarrer ou arrêter le tracking */}
       {trackingActive ? (
         <Button
           title="Arrêter la géolocalisation et supprimer l'historique"
@@ -191,7 +334,13 @@ const LocationList: React.FC = () => {
   );
 };
 
-// Composant parent encapsulant le composant LocationList
+// ----------------------------------------------------------------------------
+// COMPOSANT PARENT
+// ----------------------------------------------------------------------------
+
+/**
+ * Composant parent encapsulant le suivi de position.
+ */
 export default function LocTabScreen() {
   return (
     <View style={styles.screenContainer}>
@@ -200,7 +349,10 @@ export default function LocTabScreen() {
   );
 }
 
-// Styles définis pour le composant
+// ----------------------------------------------------------------------------
+// STYLES
+// ----------------------------------------------------------------------------
+
 const styles = StyleSheet.create({
   screenContainer: {
     flex: 1,
