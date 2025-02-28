@@ -1,109 +1,224 @@
-import { StyleSheet, Image, Platform } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  FlatList,
+  PermissionsAndroid,
+  Button,
+  Linking,
+} from 'react-native';
+import Geolocation from 'react-native-geolocation-service';
 
-import { Collapsible } from '@/components/Collapsible';
-import { ExternalLink } from '@/components/ExternalLink';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
-import { IconSymbol } from '@/components/ui/IconSymbol';
+interface MyGeoCoordinates {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+  altitude?: number | null;
+  altitudeAccuracy?: number | null;
+  heading?: number | null;
+  speed?: number | null;
+}
 
-export default function TabTwoScreen() {
+interface MyGeolocationPosition {
+  coords: MyGeoCoordinates;
+  timestamp: number;
+}
+
+const LocationList: React.FC = () => {
+  const [locations, setLocations] = useState<MyGeoCoordinates[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [trackingActive, setTrackingActive] = useState<boolean>(true);
+  const watchIdRef = useRef<number | null>(null);
+
+  const requestAndWatch = async () => {
+    try {
+      // Demande de la permission fine (premier plan)
+      const fineLocation = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        {
+          title: 'Autorisation de géolocalisation',
+          message:
+            'Cette application a besoin d’accéder à votre position pour fonctionner correctement.',
+          buttonNeutral: 'Demander plus tard',
+          buttonNegative: 'Annuler',
+          buttonPositive: 'OK',
+        }
+      );
+
+      if (fineLocation !== PermissionsAndroid.RESULTS.GRANTED) {
+        setErrorMessage(
+          "Permission de géolocalisation refusée. Veuillez autoriser 'Utiliser seulement depuis cette application'."
+        );
+        return;
+      }
+
+      // Demande de la permission d'arrière-plan
+      const backgroundLocation = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
+        {
+          title: 'Autorisation de géolocalisation en arrière-plan',
+          message:
+            "Cette application a besoin d'accéder à votre position en arrière-plan pour collecter des données en continu.",
+          buttonNeutral: 'Demander plus tard',
+          buttonNegative: 'Annuler',
+          buttonPositive: 'OK',
+        }
+      );
+
+      if (backgroundLocation !== PermissionsAndroid.RESULTS.GRANTED) {
+        setErrorMessage(
+          "Permission de géolocalisation en arrière-plan refusée. Veuillez autoriser l'accès en arrière-plan dans les paramètres."
+        );
+        return;
+      }
+
+      // Réinitialiser l'historique et démarrer le suivi
+      setLocations([]);
+      setErrorMessage(null);
+      setTrackingActive(true);
+      startWatching();
+    } catch (err) {
+      console.warn(err);
+      setErrorMessage("Erreur lors de la demande de permission.");
+    }
+  };
+
+  const startWatching = () => {
+    // Si un watch est déjà lancé, on l'efface
+    if (watchIdRef.current !== null) {
+      Geolocation.clearWatch(watchIdRef.current);
+    }
+    watchIdRef.current = Geolocation.watchPosition(
+      (position: MyGeolocationPosition) => {
+        setLocations(prev => [...prev, position.coords]);
+        setErrorMessage(null);
+      },
+      (error) => {
+        console.log(error.code, error.message);
+        setErrorMessage(error.message);
+      },
+      {
+        enableHighAccuracy: true,
+        distanceFilter: 0,
+        interval: 5000, // toutes les 5 secondes
+        fastestInterval: 2000,
+      }
+    );
+  };
+
+  const stopTracking = () => {
+    // Arrête le suivi et supprime l'historique
+    if (watchIdRef.current !== null) {
+      Geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    setLocations([]);
+    setTrackingActive(false);
+    setErrorMessage("Géolocalisation arrêtée et historique supprimé.");
+  };
+
+  useEffect(() => {
+    // Lancer le tracking dès le montage
+    requestAndWatch();
+    return () => {
+      if (watchIdRef.current !== null) {
+        Geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  }, []);
+
+  const handleOpenSettings = () => {
+    Linking.openSettings();
+  };
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
-      headerImage={
-        <IconSymbol
-          size={310}
-          color="#808080"
-          name="chevron.left.forwardslash.chevron.right"
-          style={styles.headerImage}
+    <View style={styles.container}>
+      <Text style={styles.title}>Liste des positions collectées</Text>
+      {trackingActive && (
+        <Text style={styles.trackingInfo}>
+          Tracking en cours : mise à jour toutes les 5 secondes.
+        </Text>
+      )}
+      {errorMessage && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{errorMessage}</Text>
+          <Button title="Réessayer" onPress={requestAndWatch} />
+          <Button title="Ouvrir les paramètres" onPress={handleOpenSettings} />
+        </View>
+      )}
+      <FlatList
+        nestedScrollEnabled
+        data={locations}
+        keyExtractor={(_, index) => index.toString()}
+        renderItem={({ item, index }) => (
+          <Text style={styles.item}>
+            #{index + 1} : Lat {item.latitude.toFixed(5)} | Lon {item.longitude.toFixed(5)}
+          </Text>
+        )}
+      />
+      {trackingActive ? (
+        <Button
+          title="Arrêter la géolocalisation et supprimer l'historique"
+          onPress={stopTracking}
         />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Explore</ThemedText>
-      </ThemedView>
-      <ThemedText>This app includes example code to help you get started.</ThemedText>
-      <Collapsible title="File-based routing">
-        <ThemedText>
-          This app has two screens:{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/explore.tsx</ThemedText>
-        </ThemedText>
-        <ThemedText>
-          The layout file in <ThemedText type="defaultSemiBold">app/(tabs)/_layout.tsx</ThemedText>{' '}
-          sets up the tab navigator.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/router/introduction">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Android, iOS, and web support">
-        <ThemedText>
-          You can open this project on Android, iOS, and the web. To open the web version, press{' '}
-          <ThemedText type="defaultSemiBold">w</ThemedText> in the terminal running this project.
-        </ThemedText>
-      </Collapsible>
-      <Collapsible title="Images">
-        <ThemedText>
-          For static images, you can use the <ThemedText type="defaultSemiBold">@2x</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">@3x</ThemedText> suffixes to provide files for
-          different screen densities
-        </ThemedText>
-        <Image source={require('@/assets/images/react-logo.png')} style={{ alignSelf: 'center' }} />
-        <ExternalLink href="https://reactnative.dev/docs/images">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Custom fonts">
-        <ThemedText>
-          Open <ThemedText type="defaultSemiBold">app/_layout.tsx</ThemedText> to see how to load{' '}
-          <ThemedText style={{ fontFamily: 'SpaceMono' }}>
-            custom fonts such as this one.
-          </ThemedText>
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/versions/latest/sdk/font">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Light and dark mode components">
-        <ThemedText>
-          This template has light and dark mode support. The{' '}
-          <ThemedText type="defaultSemiBold">useColorScheme()</ThemedText> hook lets you inspect
-          what the user's current color scheme is, and so you can adjust UI colors accordingly.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Animations">
-        <ThemedText>
-          This template includes an example of an animated component. The{' '}
-          <ThemedText type="defaultSemiBold">components/HelloWave.tsx</ThemedText> component uses
-          the powerful <ThemedText type="defaultSemiBold">react-native-reanimated</ThemedText>{' '}
-          library to create a waving hand animation.
-        </ThemedText>
-        {Platform.select({
-          ios: (
-            <ThemedText>
-              The <ThemedText type="defaultSemiBold">components/ParallaxScrollView.tsx</ThemedText>{' '}
-              component provides a parallax effect for the header image.
-            </ThemedText>
-          ),
-        })}
-      </Collapsible>
-    </ParallaxScrollView>
+      ) : (
+        <Button title="Démarrer la géolocalisation" onPress={requestAndWatch} />
+      )}
+    </View>
+  );
+};
+
+export default function LocTabScreen() {
+  return (
+    <View style={styles.screenContainer}>
+      <LocationList />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  headerImage: {
-    color: '#808080',
-    bottom: -90,
-    left: -35,
-    position: 'absolute',
+  screenContainer: {
+    flex: 1,
+    padding: 16,
+    backgroundColor: '#F2F2F2',
   },
-  titleContainer: {
-    flexDirection: 'row',
-    gap: 8,
+  container: {
+    flex: 1,
+  },
+  title: {
+    fontSize: 20,
+    marginBottom: 12,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  trackingInfo: {
+    fontSize: 14,
+    color: '#333',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  errorContainer: {
+    backgroundColor: '#FFEDED',
+    padding: 12,
+    marginVertical: 10,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#FFAAAA',
+    alignItems: 'center',
+  },
+  errorText: {
+    color: '#D8000C',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  item: {
+    fontSize: 16,
+    marginVertical: 4,
+    padding: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#DDD',
   },
 });
