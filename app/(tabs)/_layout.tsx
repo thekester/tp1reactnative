@@ -47,25 +47,15 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="explore"
+        name="tasks"
         options={{
-          title: 'Explore',
+          title: 'Tasks',
           tabBarIcon: ({ color }) => (
             <IconSymbol size={28} name="paperplane.fill" color={color} />
           ),
         }}
       />
 
-      <Tabs.Screen
-        name="loc"
-        options={{
-          title: 'LOC',
-          // ICI on utilise le composant SVG importé
-          tabBarIcon: ({ color }) => (
-            <LocationSvg width={24} height={24} fill={color} />
-          ),
-        }}
-      />
     </Tabs>
   );
 }
