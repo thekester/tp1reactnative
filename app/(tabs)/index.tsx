@@ -1,16 +1,44 @@
 import React from 'react';
-import { Image, StyleSheet, Platform, View } from 'react-native';
-
-import { HelloWave } from '@/components/HelloWave';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
+import { Image, StyleSheet, FlatList, SafeAreaView, TouchableOpacity } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
-import CalculateurDeSomme from '@/components/CalculateurDeSomme';
-import DatabaseComponent from '@/components/DatabaseComponent';
+import ParallaxScrollView from '@/components/ParallaxScrollView';
+
+interface Task {
+  id: string;
+  title: string;
+  time?: string;
+  due?: string;
+}
+
+const recentTasks: Task[] = [
+  { id: '1', title: 'Réunion de suivi', time: '10:00 AM' },
+  { id: '2', title: 'Rédaction de rapport', time: '11:30 AM' },
+  { id: '3', title: 'Appel client', time: '1:00 PM' },
+];
+
+const upcomingTasks: Task[] = [
+  { id: '4', title: 'Planification de projet', due: 'Demain' },
+  { id: '5', title: 'Revue de code', due: 'Vendredi' },
+  { id: '6', title: 'Mise à jour du site', due: 'Lundi prochain' },
+];
+
+interface TaskItemProps {
+  title: string;
+  subtitle: string;
+}
+
+const TaskItem: React.FC<TaskItemProps> = ({ title, subtitle }) => (
+  <ThemedView style={styles.taskItem}>
+    <ThemedText style={styles.taskTitle}>{title}</ThemedText>
+    <ThemedText style={styles.taskSubtitle}>{subtitle}</ThemedText>
+  </ThemedView>
+);
 
 export default function HomeScreen() {
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <ParallaxScrollView
         headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
         headerImage={
@@ -20,56 +48,48 @@ export default function HomeScreen() {
           />
         }
       >
-        <ThemedView style={styles.titleContainer}>
-          <ThemedText type="title">Welcome!</ThemedText>
-          <HelloWave />
-        </ThemedView>
-        
-        <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-          <ThemedText>
-            Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-            Press{' '}
-            <ThemedText type="defaultSemiBold">
-              {Platform.select({
-                ios: 'cmd + d',
-                android: 'cmd + m',
-                web: 'F12',
-              })}
-            </ThemedText>{' '}
-            to open developer tools.
+        <LinearGradient colors={['#FF7E5F', '#FEB47B']} style={styles.headerGradient}>
+          <ThemedText type="title" style={styles.headerTitle}>
+            Task Manager
           </ThemedText>
-        </ThemedView>
-        
-        <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          <ThemedText>
-            Tap the Explore tab to learn more about what's included in this starter app.
+          <ThemedText style={styles.headerSubtitle}>
+            Gérez vos tâches avec style
           </ThemedText>
-        </ThemedView>
-        
-        <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-          <ThemedText>
-            When you're ready, run{' '}
-            <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-            <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-            <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-            <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-          </ThemedText>
-        </ThemedView>
-        
-        <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">Calculateur de somme</ThemedText>
-          <CalculateurDeSomme />
+        </LinearGradient>
+
+        <ThemedView style={styles.sectionContainer}>
+          <ThemedText type="subtitle">Mes tâches récentes</ThemedText>
+          <FlatList
+            data={recentTasks}
+            renderItem={({ item }) => (
+              <TaskItem title={item.title} subtitle={item.time || ''} />
+            )}
+            keyExtractor={(item) => item.id}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.taskList}
+          />
         </ThemedView>
 
-        <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">SQLite Database</ThemedText>
-          <DatabaseComponent />
+        <ThemedView style={styles.sectionContainer}>
+          <ThemedText type="subtitle">Tâches à venir</ThemedText>
+          <FlatList
+            data={upcomingTasks}
+            renderItem={({ item }) => (
+              <TaskItem title={item.title} subtitle={item.due || ''} />
+            )}
+            keyExtractor={(item) => item.id}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.taskList}
+          />
         </ThemedView>
       </ParallaxScrollView>
-    </View>
+
+      <TouchableOpacity style={styles.floatingButton}>
+        <ThemedText style={styles.floatingButtonText}>+</ThemedText>
+      </TouchableOpacity>
+    </SafeAreaView>
   );
 }
 
@@ -77,19 +97,50 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  titleContainer: {
-    flexDirection: 'row',
+  headerGradient: {
+    padding: 20,
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    borderRadius: 10,
+    margin: 16,
+    marginTop: 60,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#F2F2F2',
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  headerSubtitle: {
+    fontSize: 16,
+    color: '#fff',
+    marginTop: 4,
+  },
+  sectionContainer: {
+    marginVertical: 10,
+    paddingHorizontal: 20,
+  },
+  taskList: {
+    paddingVertical: 10,
+  },
+  taskItem: {
+    backgroundColor: '#fff',
+    padding: 20,
+    marginRight: 15,
+    borderRadius: 15,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 5,
+    minWidth: 200,
+  },
+  taskTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  taskSubtitle: {
+    fontSize: 14,
+    color: '#555',
+    marginTop: 8,
   },
   reactLogo: {
     height: 178,
@@ -97,5 +148,25 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     position: 'absolute',
+  },
+  floatingButton: {
+    position: 'absolute',
+    bottom: 30,
+    right: 30,
+    backgroundColor: '#FF7E5F',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  floatingButtonText: {
+    fontSize: 30,
+    color: '#fff',
   },
 });
