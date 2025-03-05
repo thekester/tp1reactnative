@@ -1,42 +1,96 @@
-import React from 'react';
-import { Image, StyleSheet, FlatList, SafeAreaView, TouchableOpacity } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Image, StyleSheet, FlatList, SafeAreaView, TouchableOpacity, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import ParallaxScrollView from '@/components/ParallaxScrollView';
+import SQLite from 'react-native-sqlite-storage';
 
 interface Task {
-  id: string;
-  title: string;
-  time?: string;
-  due?: string;
+  id: number;
+  task: string;
+  date: string; // La date programmée ou de création
+  location?: string;
+  distance?: string;
+  category?: string;
 }
 
-const recentTasks: Task[] = [
-  { id: '1', title: 'Réunion de suivi', time: '10:00 AM' },
-  { id: '2', title: 'Rédaction de rapport', time: '11:30 AM' },
-  { id: '3', title: 'Appel client', time: '1:00 PM' },
-];
-
-const upcomingTasks: Task[] = [
-  { id: '4', title: 'Planification de projet', due: 'Demain' },
-  { id: '5', title: 'Revue de code', due: 'Vendredi' },
-  { id: '6', title: 'Mise à jour du site', due: 'Lundi prochain' },
-];
-
-interface TaskItemProps {
-  title: string;
-  subtitle: string;
+let db: any = null;
+if (Platform.OS !== 'web') {
+  db = SQLite.openDatabase({ name: 'tasks.db', location: 'default' });
 }
-
-const TaskItem: React.FC<TaskItemProps> = ({ title, subtitle }) => (
-  <ThemedView style={styles.taskItem}>
-    <ThemedText style={styles.taskTitle}>{title}</ThemedText>
-    <ThemedText style={styles.taskSubtitle}>{subtitle}</ThemedText>
-  </ThemedView>
-);
 
 export default function HomeScreen() {
+  const [tasks, setTasks] = useState<Task[]>([]);
+
+  // Création ou vérification de la table avec le même schéma que TaskManagerScreen
+  useEffect(() => {
+    if (Platform.OS !== 'web') {
+      db.transaction((tx: any) => {
+        tx.executeSql(
+          'CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, task TEXT, date TEXT, location TEXT, distance TEXT, category TEXT);',
+          [],
+          () => {
+            loadTasks();
+          },
+          (error: any) => {
+            console.log('Erreur lors de la création de la table :', error);
+          }
+        );
+      });
+    } else {
+      // Pour le web, on charge depuis localStorage
+      const tasksStr = localStorage.getItem('tasks');
+      if (tasksStr) {
+        setTasks(JSON.parse(tasksStr));
+      }
+    }
+  }, []);
+
+  // Fonction de chargement des tâches
+  const loadTasks = () => {
+    if (Platform.OS !== 'web') {
+      db.transaction((tx: any) => {
+        tx.executeSql(
+          'SELECT * FROM tasks;',
+          [],
+          (_: any, results: any) => {
+            const loadedTasks: Task[] = [];
+            for (let i = 0; i < results.rows.length; i++) {
+              loadedTasks.push(results.rows.item(i));
+            }
+            setTasks(loadedTasks);
+          },
+          (error: any) => {
+            console.log('Erreur lors du chargement des tâches :', error);
+          }
+        );
+      });
+    } else {
+      const tasksStr = localStorage.getItem('tasks');
+      if (tasksStr) {
+        setTasks(JSON.parse(tasksStr));
+      }
+    }
+  };
+
+  // Séparation des tâches en fonction de la date par rapport à aujourd'hui
+  const now = new Date();
+  const recentTasks = tasks
+    .filter(task => new Date(task.date) <= now)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const upcomingTasks = tasks
+    .filter(task => new Date(task.date) > now)
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  // Composant d'affichage d'une tâche
+  const TaskItem: React.FC<{ title: string; subtitle: string }> = ({ title, subtitle }) => (
+    <ThemedView style={styles.taskItem}>
+      <ThemedText style={styles.taskTitle}>{title}</ThemedText>
+      <ThemedText style={styles.taskSubtitle}>{subtitle}</ThemedText>
+    </ThemedView>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <ParallaxScrollView
@@ -59,33 +113,42 @@ export default function HomeScreen() {
 
         <ThemedView style={styles.sectionContainer}>
           <ThemedText type="subtitle">Mes tâches récentes</ThemedText>
-          <FlatList
-            data={recentTasks}
-            renderItem={({ item }) => (
-              <TaskItem title={item.title} subtitle={item.time || ''} />
-            )}
-            keyExtractor={(item) => item.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.taskList}
-          />
+          {recentTasks.length === 0 ? (
+            <ThemedText style={styles.emptyText}>Aucune tâche encore ajoutée</ThemedText>
+          ) : (
+            <FlatList
+              data={recentTasks}
+              renderItem={({ item }) => (
+                <TaskItem title={item.task} subtitle={item.date} />
+              )}
+              keyExtractor={(item) => item.id.toString()}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.taskList}
+            />
+          )}
         </ThemedView>
 
         <ThemedView style={styles.sectionContainer}>
           <ThemedText type="subtitle">Tâches à venir</ThemedText>
-          <FlatList
-            data={upcomingTasks}
-            renderItem={({ item }) => (
-              <TaskItem title={item.title} subtitle={item.due || ''} />
-            )}
-            keyExtractor={(item) => item.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.taskList}
-          />
+          {upcomingTasks.length === 0 ? (
+            <ThemedText style={styles.emptyText}>Aucune tâche programmée</ThemedText>
+          ) : (
+            <FlatList
+              data={upcomingTasks}
+              renderItem={({ item }) => (
+                <TaskItem title={item.task} subtitle={item.date} />
+              )}
+              keyExtractor={(item) => item.id.toString()}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.taskList}
+            />
+          )}
         </ThemedView>
       </ParallaxScrollView>
 
+      {/* Bouton flottant pour ajouter une nouvelle tâche */}
       <TouchableOpacity style={styles.floatingButton}>
         <ThemedText style={styles.floatingButtonText}>+</ThemedText>
       </TouchableOpacity>
@@ -117,6 +180,12 @@ const styles = StyleSheet.create({
   sectionContainer: {
     marginVertical: 10,
     paddingHorizontal: 20,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#777',
+    marginTop: 10,
+    textAlign: 'center',
   },
   taskList: {
     paddingVertical: 10,
