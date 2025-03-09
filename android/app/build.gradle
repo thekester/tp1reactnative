@@ -149,6 +149,7 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    implementation("com.github.Dimezis:BlurView:version-2.0.6") // 👈 Add this line
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
@@ -173,4 +174,5 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
 }
