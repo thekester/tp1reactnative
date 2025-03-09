@@ -1,11 +1,27 @@
-import React, { useEffect, useState } from 'react';
-import { Image, StyleSheet, FlatList, SafeAreaView, TouchableOpacity, Platform, View } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import {
+  Image,
+  StyleSheet,
+  FlatList,
+  SafeAreaView,
+  TouchableOpacity,
+  Platform,
+  View,
+} from 'react-native';
 import { WebView } from 'react-native-webview';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import ParallaxScrollView from '@/components/ParallaxScrollView';
 import SQLite from 'react-native-sqlite-storage';
+
+// Extend global Window to include Mapbox properties
+declare global {
+  interface Window {
+    mapboxgl: any;
+    MapboxSearchBox: any;
+  }
+}
 
 interface Task {
   id: number;
@@ -21,52 +37,155 @@ if (Platform.OS !== 'web') {
   db = SQLite.openDatabase({ name: 'tasks.db', location: 'default' });
 }
 
-/* 
-  MapboxGLJSWebView:
-  This component uses react-native-webview to load an HTML page that initializes a Mapbox GL JS map.
-  Replace 'YOUR_MAPBOX_ACCESS_TOKEN' with your actual public token.
-*/
+/**
+ * MapboxGLJSWebView Component
+ *
+ * For mobile: Loads a WebView that displays an HTML page using Mapbox GL JS.
+ * For web: Injects the Mapbox GL JS scripts/CSS directly into a div.
+ * A search box is added after the map loads.
+ */
 const MapboxGLJSWebView: React.FC = () => {
-  const MAPBOX_ACCESS_TOKEN = 'pk.eyJ1IjoibWFwcHltYWFuaWFjIiwiYSI6ImNtODFuZ3AxejEyZmUycnM1MHFpazN0OXQifQ.Y_6RTH2rn8M1QOgSHEQhJg';
+  const MAPBOX_ACCESS_TOKEN =
+    'pk.eyJ1IjoibWFwcHltYWFuaWFjIiwiYSI6ImNtODFuZ3AxejEyZmUycnM1MHFpazN0OXQifQ.Y_6RTH2rn8M1QOgSHEQhJg';
 
-  const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>Mapbox GL JS in React Native</title>
-        <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
-        <script src="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
-        <link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet" />
-        <style>
-          body { margin: 0; padding: 0; }
-          #map { position: absolute; top: 0; bottom: 0; width: 100%; }
-        </style>
-      </head>
-      <body>
-        <div id="map"></div>
-        <script>
-          mapboxgl.accessToken = '${MAPBOX_ACCESS_TOKEN}';
-          const map = new mapboxgl.Map({
-            container: 'map',
-            style: 'mapbox://styles/mapbox/streets-v11',
+  if (Platform.OS === 'web') {
+    const mapContainer = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+      if (mapContainer.current && !document.getElementById('mapbox-gl-css')) {
+        // Inject Mapbox CSS
+        const link = document.createElement('link');
+        link.id = 'mapbox-gl-css';
+        link.rel = 'stylesheet';
+        link.href = 'https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.css';
+        document.head.appendChild(link);
+
+        // Inject Mapbox JS
+        const script = document.createElement('script');
+        script.src = 'https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.js';
+        script.async = true;
+        document.body.appendChild(script);
+
+        // Inject Search JS
+        const searchScript = document.createElement('script');
+        searchScript.id = 'search-js';
+        searchScript.defer = true;
+        searchScript.src = 'https://api.mapbox.com/search-js/v1.0.0/web.js';
+        document.body.appendChild(searchScript);
+
+        script.onload = () => initializeMap();
+      } else {
+        initializeMap();
+      }
+
+      function initializeMap() {
+        // @ts-ignore
+        if (window.mapboxgl && mapContainer.current) {
+          // @ts-ignore
+          window.mapboxgl.accessToken = MAPBOX_ACCESS_TOKEN;
+          // @ts-ignore
+          const map = new window.mapboxgl.Map({
+            container: mapContainer.current,
+            style: 'mapbox://styles/mapbox/standard',
             center: [-74.5, 40],
-            zoom: 9
+            zoom: 9,
           });
-        </script>
-      </body>
-    </html>
-  `;
-
-  return (
-    <View style={styles.mapContainer}>
-      <WebView
-        originWhitelist={['*']}
-        source={{ html: htmlContent }}
-        style={styles.map}
+          // @ts-ignore
+          map.addControl(new window.mapboxgl.NavigationControl());
+          // Add search box after the map loads
+          window.addEventListener('load', () => {
+            // @ts-ignore
+            const searchBox = new window.MapboxSearchBox();
+            searchBox.accessToken = window.mapboxgl.accessToken;
+            searchBox.options = {
+              types: 'address,poi',
+              proximity: [-74.0066, 40.7135],
+            };
+            searchBox.marker = true;
+            searchBox.mapboxgl = window.mapboxgl;
+            map.addControl(searchBox);
+          });
+          map.on('click', (e: any) => {
+            const lngLat = e.lngLat;
+            console.log('Map clicked at:', lngLat);
+          });
+        }
+      }
+    }, []);
+    return (
+      <div
+        ref={mapContainer}
+        style={{ height: '300px', width: '100%', marginTop: '10px', marginBottom: '10px' }}
       />
-    </View>
-  );
+    );
+  } else {
+    // Mobile implementation using WebView
+    const htmlContent = `
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Mapbox GL JS</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.js"></script>
+    <script id="search-js" defer src="https://api.mapbox.com/search-js/v1.0.0/web.js"></script>
+    <style>
+      body { margin: 0; padding: 0; }
+      #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <script>
+      mapboxgl.accessToken = '${MAPBOX_ACCESS_TOKEN}';
+      const map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/standard',
+        center: [-74.5, 40],
+        zoom: 9
+      });
+      map.addControl(new mapboxgl.NavigationControl());
+      map.on('click', (e) => {
+        const lngLat = e.lngLat;
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          longitude: lngLat.lng,
+          latitude: lngLat.lat
+        }));
+      });
+      // Add search box after the map loads
+      window.addEventListener('load', () => {
+        const searchBox = new MapboxSearchBox();
+        searchBox.accessToken = mapboxgl.accessToken;
+        searchBox.options = {
+          types: 'address,poi',
+          proximity: [-74.0066, 40.7135]
+        };
+        searchBox.marker = true;
+        searchBox.mapboxgl = mapboxgl;
+        map.addControl(searchBox);
+      });
+    </script>
+  </body>
+</html>
+    `;
+    return (
+      <View style={styles.mapContainer}>
+        <WebView
+          originWhitelist={['*']}
+          source={{ html: htmlContent }}
+          style={styles.map}
+          onMessage={(event) => {
+            try {
+              const data = JSON.parse(event.nativeEvent.data);
+              console.log('Map click received:', data);
+            } catch (err) {
+              console.error('Error parsing map message:', err);
+            }
+          }}
+        />
+      </View>
+    );
+  }
 };
 
 function HomeScreen() {
@@ -175,7 +294,7 @@ function HomeScreen() {
 
         <ThemedView style={styles.sectionContainer}>
           <ThemedText type="subtitle">Carte des tâches</ThemedText>
-          {/* Instead of a native Mapbox view, we now use a WebView loading Mapbox GL JS */}
+          {/* For both mobile and web, load the Mapbox GL JS map */}
           <MapboxGLJSWebView />
         </ThemedView>
       </ParallaxScrollView>
@@ -198,7 +317,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 28, fontWeight: 'bold', color: '#fff' },
   headerSubtitle: { fontSize: 16, color: '#fff', marginTop: 4 },
-  sectionContainer: { marginVertical: 10, paddingHorizontal: 20 },
+  sectionContainer: { marginTop: 10, marginBottom: 10, paddingHorizontal: 20 },
   emptyText: { fontSize: 16, color: '#777', marginTop: 10, textAlign: 'center' },
   taskList: { paddingVertical: 10 },
   taskItem: {
@@ -233,7 +352,7 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   floatingButtonText: { fontSize: 30, color: '#fff' },
-  mapContainer: { height: 300, marginVertical: 10 },
+  mapContainer: { height: 300, marginTop: 10, marginBottom: 10 },
   map: { flex: 1 },
 });
 

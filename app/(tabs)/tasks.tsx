@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -31,9 +31,11 @@ if (Platform.OS !== 'web') {
 
 /**
  * MapboxGLJSSelector Component
- * 
- * Loads a WebView that initializes a Mapbox GL JS map.
- * When the map is clicked, the coordinates are posted to React Native.
+ *
+ * On mobile platforms it uses a WebView.
+ * On web platforms, it injects Mapbox CSS and JS via a useEffect hook and initializes the map
+ * in a referenced div container. Clicking on the map updates the selected location without refreshing
+ * the map.
  */
 interface MapboxGLJSSelectorProps {
   onLocationSelect: (coords: number[]) => void;
@@ -43,45 +45,133 @@ const MapboxGLJSSelector: React.FC<MapboxGLJSSelectorProps> = ({ onLocationSelec
   const MAPBOX_ACCESS_TOKEN =
     'pk.eyJ1IjoibWFwcHltYWFuaWFjIiwiYSI6ImNtODFuZ3AxejEyZmUycnM1MHFpazN0OXQifQ.Y_6RTH2rn8M1QOgSHEQhJg';
 
-  const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>Mapbox GL JS Selector</title>
-        <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
-        <script src="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
-        <link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet" />
-        <style>
-          body { margin: 0; padding: 0; }
-          #map { position: absolute; top: 0; bottom: 0; width: 100%; }
-        </style>
-      </head>
-      <body>
-        <div id="map"></div>
-        <script>
-          mapboxgl.accessToken = '${MAPBOX_ACCESS_TOKEN}';
-          const map = new mapboxgl.Map({
-            container: 'map',
-            style: 'mapbox://styles/mapbox/streets-v11',
+  if (Platform.OS === 'web') {
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+      function initializeMap() {
+        if (window.mapboxgl && containerRef.current) {
+          window.mapboxgl.accessToken = MAPBOX_ACCESS_TOKEN;
+          const map = new window.mapboxgl.Map({
+            container: containerRef.current,
+            style: 'mapbox://styles/mapbox/streets-v12',
             center: [-74.5, 40],
-            zoom: 9
+            zoom: 9,
           });
-
-          // Listen for clicks on the map
-          map.on('click', (e) => {
+          map.addControl(new window.mapboxgl.NavigationControl());
+          // Add search box once the map has fully loaded
+          map.on('load', () => {
+            if (window.MapboxSearchBox) {
+              const searchBox = new window.MapboxSearchBox();
+              searchBox.accessToken = window.mapboxgl.accessToken;
+              searchBox.options = {
+                types: 'address,poi',
+                proximity: [-74.0066, 40.7135],
+              };
+              searchBox.marker = true;
+              searchBox.mapboxgl = window.mapboxgl;
+              map.addControl(searchBox);
+            }
+          });
+          // Listen for clicks and update the selected location without reloading the map
+          map.on('click', (e: any) => {
             const lngLat = e.lngLat;
-            // Post the coordinates to React Native
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              longitude: lngLat.lng,
-              latitude: lngLat.lat
-            }));
+            onLocationSelect([lngLat.lng, lngLat.lat]);
           });
-        </script>
-      </body>
-    </html>
-  `;
+        }
+      }
 
+      // Inject Mapbox CSS if not already present
+      if (!document.getElementById('mapbox-gl-css')) {
+        const link = document.createElement('link');
+        link.id = 'mapbox-gl-css';
+        link.rel = 'stylesheet';
+        link.href = 'https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.css';
+        document.head.appendChild(link);
+      }
+
+      // Inject Mapbox JS if not already present
+      if (!document.getElementById('mapbox-gl-js')) {
+        const script = document.createElement('script');
+        script.id = 'mapbox-gl-js';
+        script.src = 'https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.js';
+        script.async = true;
+        script.onload = () => {
+          // Inject the search script after the main Mapbox script loads
+          if (!document.getElementById('search-js')) {
+            const searchScript = document.createElement('script');
+            searchScript.id = 'search-js';
+            searchScript.defer = true;
+            searchScript.src = 'https://api.mapbox.com/search-js/v1.0.0/web.js';
+            document.body.appendChild(searchScript);
+            searchScript.onload = () => initializeMap();
+          } else {
+            initializeMap();
+          }
+        };
+        document.body.appendChild(script);
+      } else {
+        initializeMap();
+      }
+    }, [MAPBOX_ACCESS_TOKEN, onLocationSelect]);
+
+    return (
+      <div
+        ref={containerRef}
+        style={{ height: 300, marginTop: 10, marginBottom: 10 }}
+      />
+    );
+  }
+
+  // Mobile: use WebView to load an HTML content string
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Mapbox GL JS Selector</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.js"></script>
+    <script id="search-js" defer src="https://api.mapbox.com/search-js/v1.0.0/web.js"></script>
+    <style>
+      body { margin: 0; padding: 0; }
+      #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <script>
+      mapboxgl.accessToken = '${MAPBOX_ACCESS_TOKEN}';
+      const map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/streets-v12',
+        center: [-74.5, 40],
+        zoom: 9
+      });
+      map.addControl(new mapboxgl.NavigationControl());
+      map.on('click', (e) => {
+        const lngLat = e.lngLat;
+        window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({
+          longitude: lngLat.lng,
+          latitude: lngLat.lat
+        }));
+      });
+      map.on('load', () => {
+        const searchBox = new MapboxSearchBox();
+        searchBox.accessToken = mapboxgl.accessToken;
+        searchBox.options = {
+          types: 'address,poi',
+          proximity: [-74.0066, 40.7135]
+        };
+        searchBox.marker = true;
+        searchBox.mapboxgl = mapboxgl;
+        map.addControl(searchBox);
+      });
+    </script>
+  </body>
+</html>
+  `;
   return (
     <View style={selectorStyles.container}>
       <WebView
@@ -91,7 +181,6 @@ const MapboxGLJSSelector: React.FC<MapboxGLJSSelectorProps> = ({ onLocationSelec
         onMessage={(event) => {
           try {
             const data = JSON.parse(event.nativeEvent.data);
-            // Send back the coordinates as a tuple: [longitude, latitude]
             onLocationSelect([data.longitude, data.latitude]);
           } catch (err) {
             console.error('Error parsing message from WebView:', err);
@@ -105,7 +194,8 @@ const MapboxGLJSSelector: React.FC<MapboxGLJSSelectorProps> = ({ onLocationSelec
 const selectorStyles = StyleSheet.create({
   container: {
     height: 300,
-    marginVertical: 10,
+    marginTop: 10,
+    marginBottom: 10,
   },
   webview: {
     flex: 1,
@@ -129,10 +219,8 @@ const TaskManagerScreen: React.FC = () => {
         tx.executeSql(
           'CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, task TEXT, date TEXT, location TEXT, distance TEXT, category TEXT);',
           [],
-          () => {
-            loadTasks();
-          },
-          (error: any) => console.log('Erreur lors de la création de la table tasks:', error)
+          () => loadTasks(),
+          (error: any) => console.log('Error creating table:', error)
         );
       });
     } else {
@@ -155,10 +243,10 @@ const TaskManagerScreen: React.FC = () => {
             try {
               AsyncStorage.setItem('tasks', JSON.stringify(loadedTasks));
             } catch (e) {
-              console.error('Erreur lors de la synchronisation avec AsyncStorage', e);
+              console.error('Error syncing with AsyncStorage', e);
             }
           },
-          (error: any) => console.log('Erreur lors du chargement des tâches depuis SQLite:', error)
+          (error: any) => console.log('Error loading tasks:', error)
         );
       });
     } else {
@@ -171,7 +259,7 @@ const TaskManagerScreen: React.FC = () => {
     try {
       await AsyncStorage.setItem('tasks', JSON.stringify(updatedTasks));
     } catch (error) {
-      console.error('Erreur lors de la sauvegarde dans AsyncStorage:', error);
+      console.error('Error saving tasks to AsyncStorage:', error);
     }
   };
 
@@ -180,17 +268,14 @@ const TaskManagerScreen: React.FC = () => {
       Alert.alert('Erreur', 'Veuillez remplir au moins le titre et la date.');
       return;
     }
-
     if (editingTaskId) {
       if (Platform.OS !== 'web') {
         db.transaction((tx: any) => {
           tx.executeSql(
             'UPDATE tasks SET task=?, date=?, location=?, distance=?, category=? WHERE id=?;',
             [taskInput, date, location, distance, category, editingTaskId],
-            () => {
-              loadTasks();
-            },
-            (error: any) => console.log('Erreur lors de la mise à jour de la tâche dans SQLite:', error)
+            () => loadTasks(),
+            (error: any) => console.log('Error updating task in SQLite:', error)
           );
         });
       } else {
@@ -207,10 +292,8 @@ const TaskManagerScreen: React.FC = () => {
           tx.executeSql(
             'INSERT INTO tasks (task, date, location, distance, category) VALUES (?,?,?,?,?);',
             [taskInput, date, location, distance, category],
-            () => {
-              loadTasks();
-            },
-            (error: any) => console.log('Erreur lors de l\'insertion de la tâche dans SQLite:', error)
+            () => loadTasks(),
+            (error: any) => console.log('Error inserting task in SQLite:', error)
           );
         });
       } else {
@@ -227,8 +310,7 @@ const TaskManagerScreen: React.FC = () => {
         saveTasksToAsyncStorage(updatedTasks);
       }
     }
-
-    // Reset fields and close modal
+    // Reset input fields and close modal
     setTaskInput('');
     setDate('');
     setLocation('');
@@ -243,10 +325,8 @@ const TaskManagerScreen: React.FC = () => {
         tx.executeSql(
           'DELETE FROM tasks WHERE id=?;',
           [id],
-          () => {
-            loadTasks();
-          },
-          (error: any) => console.log('Erreur lors de la suppression de la tâche dans SQLite:', error)
+          () => loadTasks(),
+          (error: any) => console.log('Error deleting task from SQLite:', error)
         );
       });
     } else {
@@ -373,12 +453,13 @@ const TaskManagerScreen: React.FC = () => {
               <Picker.Item label="Famille" value="Famille" />
               <Picker.Item label="Divers" value="Divers" />
             </Picker>
-            {/* Use the WebView-based Mapbox GL JS selector for location selection */}
-            <MapboxGLJSSelector onLocationSelect={(coords) => {
-              // Save the coordinates as a JSON string in the location field
-              setLocation(JSON.stringify(coords));
-              setLocationCoords(coords);
-            }} />
+            {/* Use the MapboxGLJSSelector component for location selection */}
+            <MapboxGLJSSelector
+              onLocationSelect={(coords) => {
+                setLocation(JSON.stringify(coords));
+                setLocationCoords(coords);
+              }}
+            />
             <View style={styles.modalButtonContainer}>
               <TouchableOpacity style={styles.modalButton} onPress={handleSaveTask}>
                 <Text style={styles.modalButtonText}>
@@ -400,11 +481,36 @@ const TaskManagerScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#f0f0f0' },
-  header: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginVertical: 20 },
-  addButton: { backgroundColor: '#4CAF50', padding: 15, borderRadius: 8, alignItems: 'center', marginBottom: 20 },
-  addButtonText: { color: '#fff', fontSize: 18 },
-  sectionHeader: { fontSize: 18, fontWeight: 'bold', backgroundColor: '#eee', padding: 5, marginTop: 15 },
+  container: { 
+    flex: 1, 
+    padding: 20, 
+    backgroundColor: '#f0f0f0' 
+  },
+  header: { 
+    fontSize: 24, 
+    fontWeight: 'bold', 
+    textAlign: 'center', 
+    marginTop: 20, 
+    marginBottom: 20 
+  },
+  addButton: { 
+    backgroundColor: '#4CAF50', 
+    padding: 15, 
+    borderRadius: 8, 
+    alignItems: 'center', 
+    marginBottom: 20 
+  },
+  addButtonText: { 
+    color: '#fff', 
+    fontSize: 18 
+  },
+  sectionHeader: { 
+    fontSize: 18, 
+    fontWeight: 'bold', 
+    backgroundColor: '#eee', 
+    padding: 5, 
+    marginTop: 15 
+  },
   taskItem: {
     backgroundColor: '#fff',
     padding: 15,
@@ -413,21 +519,90 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
     marginBottom: 10,
   },
-  taskText: { fontSize: 16, marginBottom: 5 },
-  buttonContainer: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
-  editButton: { flex: 0.48, padding: 10, backgroundColor: 'orange', borderRadius: 5, alignItems: 'center' },
-  editButtonText: { color: '#fff', fontSize: 16 },
-  deleteButton: { flex: 0.48, padding: 10, backgroundColor: 'red', borderRadius: 5, alignItems: 'center' },
-  deleteButtonText: { color: '#fff', fontSize: 16 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  modalContainer: { width: '90%', backgroundColor: '#fff', borderRadius: 12, padding: 20 },
-  modalTitle: { fontSize: 24, fontWeight: '700', marginBottom: 15, textAlign: 'center', color: '#333' },
-  modalInput: { backgroundColor: '#f9f9f9', height: 45, borderColor: '#ddd', borderWidth: 1, borderRadius: 8, marginBottom: 15, paddingHorizontal: 15 },
-  picker: { height: 50, width: '100%', marginBottom: 15 },
-  modalButtonContainer: { flexDirection: 'row', justifyContent: 'space-between' },
-  modalButton: { flex: 1, backgroundColor: '#4CAF50', paddingVertical: 12, borderRadius: 8, marginHorizontal: 5, alignItems: 'center' },
-  cancelButton: { backgroundColor: '#F44336' },
-  modalButtonText: { color: '#fff', fontSize: 18, fontWeight: '600' },
+  taskText: { 
+    fontSize: 16, 
+    marginBottom: 5 
+  },
+  buttonContainer: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    marginTop: 10 
+  },
+  editButton: { 
+    flex: 0.48, 
+    padding: 10, 
+    backgroundColor: 'orange', 
+    borderRadius: 5, 
+    alignItems: 'center' 
+  },
+  editButtonText: { 
+    color: '#fff', 
+    fontSize: 16 
+  },
+  deleteButton: { 
+    flex: 0.48, 
+    padding: 10, 
+    backgroundColor: 'red', 
+    borderRadius: 5, 
+    alignItems: 'center' 
+  },
+  deleteButtonText: { 
+    color: '#fff', 
+    fontSize: 16 
+  },
+  modalOverlay: { 
+    flex: 1, 
+    backgroundColor: 'rgba(0,0,0,0.5)', 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  modalContainer: { 
+    width: '90%', 
+    backgroundColor: '#fff', 
+    borderRadius: 12, 
+    padding: 20 
+  },
+  modalTitle: { 
+    fontSize: 24, 
+    fontWeight: '700', 
+    marginBottom: 15, 
+    textAlign: 'center', 
+    color: '#333' 
+  },
+  modalInput: { 
+    backgroundColor: '#f9f9f9', 
+    height: 45, 
+    borderColor: '#ddd', 
+    borderWidth: 1, 
+    borderRadius: 8, 
+    marginBottom: 15, 
+    paddingHorizontal: 15 
+  },
+  picker: { 
+    height: 50, 
+    width: '100%', 
+    marginBottom: 15 
+  },
+  modalButtonContainer: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between' 
+  },
+  modalButton: { 
+    flex: 1, 
+    backgroundColor: '#4CAF50', 
+    paddingVertical: 12, 
+    borderRadius: 8, 
+    marginHorizontal: 5, 
+    alignItems: 'center' 
+  },
+  cancelButton: { 
+    backgroundColor: '#F44336' 
+  },
+  modalButtonText: { 
+    color: '#fff', 
+    fontSize: 18, 
+    fontWeight: '600' 
+  },
 });
 
 export default TaskManagerScreen;
