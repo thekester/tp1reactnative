@@ -13,12 +13,13 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Picker } from '@react-native-picker/picker';
 import SQLite from 'react-native-sqlite-storage';
+import { WebView } from 'react-native-webview';
 
 interface Task {
   id: string | number;
   task: string;
   date: string;
-  location?: string;
+  location?: string; // JSON string representing a tuple [longitude, latitude]
   distance?: string;
   category: string;
 }
@@ -28,7 +29,90 @@ if (Platform.OS !== 'web') {
   db = SQLite.openDatabase({ name: 'tasks.db', location: 'default' });
 }
 
-const TaskManagerScreen = () => {
+/**
+ * MapboxGLJSSelector Component
+ * 
+ * Loads a WebView that initializes a Mapbox GL JS map.
+ * When the map is clicked, the coordinates are posted to React Native.
+ */
+interface MapboxGLJSSelectorProps {
+  onLocationSelect: (coords: number[]) => void;
+}
+
+const MapboxGLJSSelector: React.FC<MapboxGLJSSelectorProps> = ({ onLocationSelect }) => {
+  const MAPBOX_ACCESS_TOKEN =
+    'pk.eyJ1IjoibWFwcHltYWFuaWFjIiwiYSI6ImNtODFuZ3AxejEyZmUycnM1MHFpazN0OXQifQ.Y_6RTH2rn8M1QOgSHEQhJg';
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Mapbox GL JS Selector</title>
+        <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+        <script src="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
+        <link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet" />
+        <style>
+          body { margin: 0; padding: 0; }
+          #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        </style>
+      </head>
+      <body>
+        <div id="map"></div>
+        <script>
+          mapboxgl.accessToken = '${MAPBOX_ACCESS_TOKEN}';
+          const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/streets-v11',
+            center: [-74.5, 40],
+            zoom: 9
+          });
+
+          // Listen for clicks on the map
+          map.on('click', (e) => {
+            const lngLat = e.lngLat;
+            // Post the coordinates to React Native
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              longitude: lngLat.lng,
+              latitude: lngLat.lat
+            }));
+          });
+        </script>
+      </body>
+    </html>
+  `;
+
+  return (
+    <View style={selectorStyles.container}>
+      <WebView
+        originWhitelist={['*']}
+        source={{ html: htmlContent }}
+        style={selectorStyles.webview}
+        onMessage={(event) => {
+          try {
+            const data = JSON.parse(event.nativeEvent.data);
+            // Send back the coordinates as a tuple: [longitude, latitude]
+            onLocationSelect([data.longitude, data.latitude]);
+          } catch (err) {
+            console.error('Error parsing message from WebView:', err);
+          }
+        }}
+      />
+    </View>
+  );
+};
+
+const selectorStyles = StyleSheet.create({
+  container: {
+    height: 300,
+    marginVertical: 10,
+  },
+  webview: {
+    flex: 1,
+  },
+});
+
+const TaskManagerScreen: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [taskInput, setTaskInput] = useState('');
@@ -37,77 +121,60 @@ const TaskManagerScreen = () => {
   const [distance, setDistance] = useState('');
   const [category, setCategory] = useState('Travail');
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [locationCoords, setLocationCoords] = useState<number[] | null>(null);
 
-  // Créer ou vérifier la table tasks sans la supprimer
   useEffect(() => {
     if (Platform.OS !== 'web') {
-      db.transaction(
-        (tx: any) => {
-          tx.executeSql(
-            'CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, task TEXT, date TEXT, location TEXT, distance TEXT, category TEXT);',
-            [],
-            () => console.log('Table tasks vérifiée/créée avec succès.'),
-            (err: any) => console.log('Erreur lors de la création de la table tasks:', err)
-          );
-        },
-        (error: any) => console.log('Erreur de transaction lors de la création de la table:', error),
-        () => {
-          loadTasks();
-        }
-      );
+      db.transaction((tx: any) => {
+        tx.executeSql(
+          'CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, task TEXT, date TEXT, location TEXT, distance TEXT, category TEXT);',
+          [],
+          () => {
+            loadTasks();
+          },
+          (error: any) => console.log('Erreur lors de la création de la table tasks:', error)
+        );
+      });
     } else {
       loadTasks();
     }
   }, []);
 
-  // Fonction pour charger les tâches depuis SQLite ou AsyncStorage
-  const loadTasks = async () => {
+  const loadTasks = () => {
     if (Platform.OS !== 'web') {
       db.transaction((tx: any) => {
         tx.executeSql(
           'SELECT * FROM tasks;',
           [],
-          async (tx: any, results: any) => {
+          (_: any, results: any) => {
             const loadedTasks: Task[] = [];
             for (let i = 0; i < results.rows.length; i++) {
               loadedTasks.push(results.rows.item(i));
             }
             setTasks(loadedTasks);
             try {
-              await AsyncStorage.setItem('tasks', JSON.stringify(loadedTasks));
-              console.log('AsyncStorage synchronisé avec SQLite');
+              AsyncStorage.setItem('tasks', JSON.stringify(loadedTasks));
             } catch (e) {
               console.error('Erreur lors de la synchronisation avec AsyncStorage', e);
             }
           },
-          (error: any) => {
-            console.log('Erreur lors du chargement des tâches depuis SQLite:', error);
-          }
+          (error: any) => console.log('Erreur lors du chargement des tâches depuis SQLite:', error)
         );
       });
     } else {
-      AsyncStorage.getItem('tasks')
-        .then((storedTasks) => {
-          if (storedTasks) {
-            setTasks(JSON.parse(storedTasks));
-          }
-        })
-        .catch((error) =>
-          console.log('Erreur lors du chargement des tâches depuis AsyncStorage:', error)
-        );
+      const tasksStr = localStorage.getItem('tasks');
+      if (tasksStr) setTasks(JSON.parse(tasksStr));
     }
   };
 
   const saveTasksToAsyncStorage = async (updatedTasks: Task[]) => {
     try {
       await AsyncStorage.setItem('tasks', JSON.stringify(updatedTasks));
-      console.log('AsyncStorage mis à jour.');
     } catch (error) {
       console.error('Erreur lors de la sauvegarde dans AsyncStorage:', error);
     }
   };
 
-  // Ajout ou mise à jour d'une tâche
   const handleSaveTask = () => {
     if (!taskInput || !date) {
       Alert.alert('Erreur', 'Veuillez remplir au moins le titre et la date.');
@@ -115,7 +182,6 @@ const TaskManagerScreen = () => {
     }
 
     if (editingTaskId) {
-      // Mise à jour d'une tâche existante
       if (Platform.OS !== 'web') {
         db.transaction((tx: any) => {
           tx.executeSql(
@@ -124,9 +190,7 @@ const TaskManagerScreen = () => {
             () => {
               loadTasks();
             },
-            (error: any) => {
-              console.log('Erreur lors de la mise à jour de la tâche dans SQLite:', error);
-            }
+            (error: any) => console.log('Erreur lors de la mise à jour de la tâche dans SQLite:', error)
           );
         });
       } else {
@@ -138,7 +202,6 @@ const TaskManagerScreen = () => {
       }
       setEditingTaskId(null);
     } else {
-      // Insertion d'une nouvelle tâche
       if (Platform.OS !== 'web') {
         db.transaction((tx: any) => {
           tx.executeSql(
@@ -147,9 +210,7 @@ const TaskManagerScreen = () => {
             () => {
               loadTasks();
             },
-            (error: any) => {
-              console.log('Erreur lors de l\'insertion de la tâche dans SQLite:', error);
-            }
+            (error: any) => console.log('Erreur lors de l\'insertion de la tâche dans SQLite:', error)
           );
         });
       } else {
@@ -167,7 +228,7 @@ const TaskManagerScreen = () => {
       }
     }
 
-    // Réinitialisation des champs et fermeture de la modale
+    // Reset fields and close modal
     setTaskInput('');
     setDate('');
     setLocation('');
@@ -176,7 +237,6 @@ const TaskManagerScreen = () => {
     setModalVisible(false);
   };
 
-  // Suppression d'une tâche
   const handleDeleteTask = (id: string | number) => {
     if (Platform.OS !== 'web') {
       db.transaction((tx: any) => {
@@ -186,9 +246,7 @@ const TaskManagerScreen = () => {
           () => {
             loadTasks();
           },
-          (error: any) => {
-            console.log('Erreur lors de la suppression de la tâche dans SQLite:', error);
-          }
+          (error: any) => console.log('Erreur lors de la suppression de la tâche dans SQLite:', error)
         );
       });
     } else {
@@ -198,7 +256,6 @@ const TaskManagerScreen = () => {
     }
   };
 
-  // Préparation d'une tâche pour l'édition
   const handleEditTask = (id: string | number) => {
     const taskToEdit = tasks.find((t) => t.id === id);
     if (taskToEdit) {
@@ -212,7 +269,6 @@ const TaskManagerScreen = () => {
     }
   };
 
-  // Tri des tâches par catégorie pour l'affichage dans SectionList
   const sortTasksByCategory = () => {
     const sorted: { [key: string]: Task[] } = {};
     tasks.forEach((t) => {
@@ -228,7 +284,6 @@ const TaskManagerScreen = () => {
     }));
   };
 
-  // Rendu d'un élément tâche avec boutons Modifier et Supprimer
   const renderTaskItem = ({ item }: { item: Task }) => (
     <View style={styles.taskItem}>
       <Text style={styles.taskText}>Tâche: {item.task}</Text>
@@ -318,6 +373,12 @@ const TaskManagerScreen = () => {
               <Picker.Item label="Famille" value="Famille" />
               <Picker.Item label="Divers" value="Divers" />
             </Picker>
+            {/* Use the WebView-based Mapbox GL JS selector for location selection */}
+            <MapboxGLJSSelector onLocationSelect={(coords) => {
+              // Save the coordinates as a JSON string in the location field
+              setLocation(JSON.stringify(coords));
+              setLocationCoords(coords);
+            }} />
             <View style={styles.modalButtonContainer}>
               <TouchableOpacity style={styles.modalButton} onPress={handleSaveTask}>
                 <Text style={styles.modalButtonText}>
@@ -339,35 +400,11 @@ const TaskManagerScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 20,
-    backgroundColor: '#f0f0f0',
-  },
-  header: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginVertical: 20,
-  },
-  addButton: {
-    backgroundColor: '#4CAF50',
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  addButtonText: {
-    color: '#fff',
-    fontSize: 18,
-  },
-  sectionHeader: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    backgroundColor: '#eee',
-    padding: 5,
-    marginTop: 15,
-  },
+  container: { flex: 1, padding: 20, backgroundColor: '#f0f0f0' },
+  header: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginVertical: 20 },
+  addButton: { backgroundColor: '#4CAF50', padding: 15, borderRadius: 8, alignItems: 'center', marginBottom: 20 },
+  addButtonText: { color: '#fff', fontSize: 18 },
+  sectionHeader: { fontSize: 18, fontWeight: 'bold', backgroundColor: '#eee', padding: 5, marginTop: 15 },
   taskItem: {
     backgroundColor: '#fff',
     padding: 15,
@@ -376,90 +413,21 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
     marginBottom: 10,
   },
-  taskText: {
-    fontSize: 16,
-    marginBottom: 5,
-  },
-  buttonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 10,
-  },
-  editButton: {
-    flex: 0.48,
-    padding: 10,
-    backgroundColor: 'orange',
-    borderRadius: 5,
-    alignItems: 'center',
-  },
-  editButtonText: {
-    color: '#fff',
-    fontSize: 16,
-  },
-  deleteButton: {
-    flex: 0.48,
-    padding: 10,
-    backgroundColor: 'red',
-    borderRadius: 5,
-    alignItems: 'center',
-  },
-  deleteButtonText: {
-    color: '#fff',
-    fontSize: 16,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContainer: {
-    width: '90%',
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 20,
-  },
-  modalTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 15,
-    textAlign: 'center',
-    color: '#333',
-  },
-  modalInput: {
-    backgroundColor: '#f9f9f9',
-    height: 45,
-    borderColor: '#ddd',
-    borderWidth: 1,
-    borderRadius: 8,
-    marginBottom: 15,
-    paddingHorizontal: 15,
-  },
-  picker: {
-    height: 50,
-    width: '100%',
-    marginBottom: 15,
-  },
-  modalButtonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  modalButton: {
-    flex: 1,
-    backgroundColor: '#4CAF50',
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginHorizontal: 5,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#F44336',
-  },
-  modalButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
-  },
+  taskText: { fontSize: 16, marginBottom: 5 },
+  buttonContainer: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
+  editButton: { flex: 0.48, padding: 10, backgroundColor: 'orange', borderRadius: 5, alignItems: 'center' },
+  editButtonText: { color: '#fff', fontSize: 16 },
+  deleteButton: { flex: 0.48, padding: 10, backgroundColor: 'red', borderRadius: 5, alignItems: 'center' },
+  deleteButtonText: { color: '#fff', fontSize: 16 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  modalContainer: { width: '90%', backgroundColor: '#fff', borderRadius: 12, padding: 20 },
+  modalTitle: { fontSize: 24, fontWeight: '700', marginBottom: 15, textAlign: 'center', color: '#333' },
+  modalInput: { backgroundColor: '#f9f9f9', height: 45, borderColor: '#ddd', borderWidth: 1, borderRadius: 8, marginBottom: 15, paddingHorizontal: 15 },
+  picker: { height: 50, width: '100%', marginBottom: 15 },
+  modalButtonContainer: { flexDirection: 'row', justifyContent: 'space-between' },
+  modalButton: { flex: 1, backgroundColor: '#4CAF50', paddingVertical: 12, borderRadius: 8, marginHorizontal: 5, alignItems: 'center' },
+  cancelButton: { backgroundColor: '#F44336' },
+  modalButtonText: { color: '#fff', fontSize: 18, fontWeight: '600' },
 });
 
 export default TaskManagerScreen;
